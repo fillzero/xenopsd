@@ -2613,6 +2613,7 @@ module Actions = struct
 			sprintf "/local/domain/%d/rrd" domid;
 			sprintf "/local/domain/%d/vm-data" domid;
 			sprintf "/local/domain/%d/feature" domid;
+			sprintf "/local/domain/%d/qemu-pid" domid;
 			sprintf "/vm/%s/rtc/timeoffset" uuid;
 		]
 
@@ -2794,6 +2795,21 @@ module Actions = struct
 							"Failed to deregister RRD plugin: caught %s"
 							(Printexc.to_string e)
 				end
+			| "local" :: "domain" :: domid :: "qemu-pid" :: [] ->
+				let value =
+					try Some (xs.Xs.read (Printf.sprintf "/local/domain/%s/qemu-pid" domid))
+					with Xs_protocol.Enoent _ -> None
+				in
+				let _ = match value with
+				  | Some "0" -> begin
+				    Xenops_helpers.with_xc
+				      (fun xc ->
+					Xenctrl.domain_pause xc (int_of_string domid)
+				      );
+				  end
+				  | _ -> ()
+				in
+				()
 			| "local" :: "domain" :: domid :: _ ->
 				fire_event_on_vm domid
 			| "vm" :: uuid :: "rtc" :: "timeoffset" :: [] ->

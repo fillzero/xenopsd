@@ -1653,7 +1653,10 @@ let init_daemon ~task ~path ~args ~name ~domid ~xs ~ready_path ?ready_val ~timeo
 	let syslog_key = (Printf.sprintf "%s-%d" name domid) in
 	let syslog_stdout = Forkhelpers.Syslog_WithKey syslog_key in
 	let redirect_stderr_to_stdout = true in
-	let pid = Forkhelpers.safe_close_and_exec None None None [] ~syslog_stdout ~redirect_stderr_to_stdout path args in
+	let qemu_path = Printf.sprintf "/local/domain/%d/qemu-pid" domid in
+	let post_script = [|"/usr/bin/xenstore-write"; qemu_path; "0"|] in
+	let pid = Forkhelpers.safe_close_and_exec None None None [] ~syslog_stdout ~redirect_stderr_to_stdout ~post_script path args in
+
 	debug
 		"%s: should be running in the background (stdout -> syslog); (fd,pid) = %s"
 		name (Forkhelpers.string_of_pidty pid);
