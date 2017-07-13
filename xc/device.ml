@@ -776,6 +776,33 @@ let status ~xs ~devid domid =
 	| _         -> (* garbage, assuming false *) false
 	with Xs_protocol.Enoent _ -> false
 
+(** for up-qemu **)
+open Qmp
+open Qmp_protocol
+
+let add_upstream domid coreType id socketId coreId threadId =
+    let qmp_cmd = Command (None, Device_add [ {name="driver"; value=coreType} ; {name="id"; value=id}; {name="socket-id"; value=(string_of_int)socketId}; {name="core-id"; value=(string_of_int)coreId};{name="thread-id"; value=(string_of_int)threadId} ]) in
+    let c = connect (Printf.sprintf "/var/run/xen/qmp-libxl-%d" domid) in
+    negotiate c;
+    write c qmp_cmd;
+    close c
+
+let del_upstream domid id =
+    let qmp_cmd = Command (None, Device_del (id)) in
+    let c = connect (Printf.sprintf "/var/run/xen/qmp-libxl-%d" domid) in
+    negotiate c;
+    write c qmp_cmd;
+    close c
+
+let get_current_using_vcpu domid =
+    let qmp_cmd = Command (None, Qmp.Query_hotpluggable_cpus) in
+    let c = connect (Printf.sprintf "/var/run/xen/qmp-libxl-%d" domid) in
+    negotiate c;
+    write c qmp_cmd;
+    let qmp_msg = read c in
+    close c;
+    qmp_msg
+
 end
 
 module PV_Vnc = struct

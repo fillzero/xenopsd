@@ -99,6 +99,9 @@ sig
 	val del : xs:Xenstore.Xs.xsh -> devid:int -> int -> unit
 	val set : xs:Xenstore.Xs.xsh -> devid:int -> int -> bool -> unit
 	val status : xs:Xenstore.Xs.xsh -> devid:int -> int -> bool
+  val get_current_using_vcpu : int -> Qmp.message
+  val del_upstream : int -> string -> unit
+  val add_upstream: int -> string -> string -> int -> int -> int -> unit
 end
 
 module PV_Vnc :

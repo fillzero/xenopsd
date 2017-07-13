@@ -1070,7 +1070,7 @@ module VM = struct
 		Domain.set_xsdata ~xs di.Xenctrl.domid xsdata
 	) Newest task vm
 
-	let set_vcpus task vm target = on_domain (fun xc xs _ _ di ->
+	let set_vcpus_trad task vm target = on_domain (fun xc xs _ _ di ->
 		let domid = di.Xenctrl.domid in
 		(* Returns the instantaneous CPU number from xenstore *)
 		let current =
@@ -1093,6 +1093,62 @@ module VM = struct
 				Device.Vcpu.set ~xs ~devid:i domid true
 			done
 		)
+	) Newest task vm
+
+	let set_vcpus_upstream task vm target = on_domain (fun xc xs _ _ di ->
+    let open Qmp in
+    let open Qmp_protocol in
+		let domid = di.Xenctrl.domid in
+		(* Returns the instantaneous CPU number from xenstore *)
+    let current = ref 0 in
+		let qmp_msg = Device.Vcpu.get_current_using_vcpu domid in (
+    match qmp_msg with
+    | Success (None, CoreList list) ->
+	  	 List.iter (fun x -> match x.qomPath with
+			 | Some c -> incr current;
+			 | None -> ()
+			) list
+   	| _ -> raise (Internal_error (Printf.sprintf "Get unexpected Qmp message: %s" (string_of_message qmp_msg))));
+
+		if !current > target then (
+			(* need to deplug cpus *)
+			let cnt = ref (!current - target) in
+     match qmp_msg with
+     | Success (None, CoreList list) ->
+	  	 List.iter (fun x -> match x.qomPath with
+			 | Some c -> if !cnt > 0 then
+            begin
+              Device.Vcpu.del_upstream domid c;
+              decr cnt
+            end
+		   | None -> ()
+	     ) list
+     | _ -> raise (Internal_error (Printf.sprintf "Get unexpected Qmp message: %s" (string_of_message qmp_msg)))
+
+		) else if !current < target then (
+			(* need to plug cpus *)
+      let cnt = ref (target - !current) in
+     match qmp_msg with
+     | Success (None, CoreList list) ->
+	  	 List.iter (fun x -> match x.qomPath with
+			 | Some c -> ()
+		   | None -> if !cnt > 0 then
+          begin
+             Device.Vcpu.add_upstream domid x.coreType
+                                          ("cpu-" ^ (string_of_int)x.socketId ^ "-" ^ (string_of_int)x.coreId)
+                                          x.socketId x.coreId x.threadId;
+          end
+	     ) list
+     | _ -> raise (Internal_error (Printf.sprintf "Get unexpected Qmp message: %s" (string_of_message qmp_msg)))
+		)
+	) Newest task vm
+
+  let set_vcpus task vm target = on_domain (fun xc xs _ _ di ->
+    (*if Device_common.is_upstream_qemu (domid_of_uuid (uuid_of_vm vm)) then*)
+    if Device_common.is_upstream_qemu di.Xenctrl.domid then
+      set_vcpus_upstream task vm target
+    else
+      set_vcpus_trad task vm target
 	) Newest task vm
 
 	let set_shadow_multiplier task vm target = on_domain (fun xc xs _ _ di ->
