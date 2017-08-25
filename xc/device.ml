@@ -12,6 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
+open Qmp
 open Printf
 
 open Xenops_utils
@@ -1978,3 +1979,84 @@ let get_tc_port ~xs domid =
   if qemu_exists
   then Dm.get_tc_port ~xs domid
   else PV_Vnc.get_tc_port ~xs domid
+
+
+let qmp_to_connection_tbl = Hashtbl.create 128
+let connection_to_qmp_tbl = Hashtbl.create 128
+
+let qmp_event_handle domid qmp_event =
+  debug "Get QMP event, domain %d: %s" domid qmp_event.event
+
+let qmp_event_thread () =
+  let qmp_socket_dir = "/var/run/xen/" in
+  let epfd = Epoll.create1 [Epoll.EPOLL_CLOEXEC] in
+  let remove qmp =
+    if Hashtbl.mem qmp_to_connection_tbl qmp
+    then begin
+      let c = Hashtbl.find qmp_to_connection_tbl qmp in
+      Hashtbl.remove qmp_to_connection_tbl qmp;
+      Hashtbl.remove connection_to_qmp_tbl c;
+      Epoll.ctl epfd Epoll.EPOLL_CTL_DEL (Qmp_protocol.to_fd c) [Epoll.EPOLLIN];
+      Qmp_protocol.close c
+    end
+  in
+
+  let add qmp =
+    let path = Filename.concat qmp_socket_dir qmp in
+    try
+      let c = Qmp_protocol.connect path in
+      Qmp_protocol.negotiate c;
+      Hashtbl.replace qmp_to_connection_tbl qmp c;
+      Hashtbl.replace connection_to_qmp_tbl c qmp;
+      Epoll.ctl epfd Epoll.EPOLL_CTL_ADD (Qmp_protocol.to_fd c) [Epoll.EPOLLIN];
+      debug "QMP %s: negotiation complete" qmp
+    with e ->
+      info "QMP %s: negotiation failed (%s): removing socket" qmp (Printexc.to_string e);
+      remove qmp
+  in
+
+  while true do
+    let qmp_socket_list = Array.to_list (Sys.readdir qmp_socket_dir) in
+    let qmp_event_socket_list =
+      List.filter (
+        fun x -> try Scanf.sscanf x "qmp-event-libxl-%d" (fun _ -> true) with _ -> false
+      ) qmp_socket_list
+    in
+    List.iter (
+      fun x ->
+        try match Hashtbl.find qmp_to_connection_tbl x with _ -> ()
+        with Not_found -> add x
+    ) qmp_event_socket_list;
+
+    let cs = Hashtbl.fold (fun k v acc -> v :: acc) qmp_to_connection_tbl [] in
+    let fds = List.map (fun x -> Qmp_protocol.to_fd x, x) cs in
+
+    let rs = Epoll.wait epfd (Hashtbl.length qmp_to_connection_tbl) 5000 in
+    List.iter (
+      fun ef ->
+        let events = fst ef in
+        let fd = snd ef in
+        let c = List.assoc fd fds in
+        let qmp = Hashtbl.find connection_to_qmp_tbl c in
+        let domid = Scanf.sscanf qmp "qmp-event-libxl-%d" (fun x -> x) in
+        List.iter (
+          function
+          | Epoll.EPOLLIN -> (
+              try
+                let m = Qmp_protocol.read c in
+                match m with 
+                | Event e -> debug "Receive QMP event domain-%d: %s" domid (string_of_message m); qmp_event_handle domid e
+                | _ -> debug "Get non-event message, domain-%d: %s" domid (string_of_message m)
+              with End_of_file ->
+                debug "QMP domain %d: End_of_file, close" domid;
+                remove qmp)
+          | Epoll.EPOLLRDHUP | Epoll.EPOLLHUP | Epoll.EPOLLERR -> 
+              debug "QMP domain %d: End_of_file, close" domid;
+              remove qmp
+          | _ -> ()
+        ) events
+    ) rs;
+  done
+
+let init_qmp_event () =
+  ignore(Thread.create qmp_event_thread ())
