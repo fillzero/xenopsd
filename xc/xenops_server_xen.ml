@@ -3090,6 +3090,7 @@ let init () =
 			xs.Xs.setperms xe_key { Xs_protocol.ACL.owner = 0; other = Xs_protocol.ACL.READ; acl = [] }
 	);
 
+	Device.Backend.init();
 	debug "xenstore is responding to requests";
 	let () = Watcher.create_watcher_thread () in
 	()

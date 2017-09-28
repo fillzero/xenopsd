@@ -2018,8 +2018,8 @@ module Backend = struct
                 debug_exn "Exception in qmp_event_thread: %s" e;
             done
 
-          let _init_qmp_event =
-            Thread.create qmp_event_thread ()
+          let init_qmp_event() =
+            ignore(Thread.create qmp_event_thread ())
         end (* Qemu_upstream_compat.Dm.QMP_Event *)
 
       let get_vnc_port ~xs domid =
@@ -2096,6 +2096,9 @@ module Backend = struct
     | Profile.Qemu_upstream        -> (module Qemu_upstream        : Intf)
 
   let of_domid x = of_profile (Profile.of_domid x)
+
+  let init() =
+    Qemu_upstream.Dm.QMP_Event.init_qmp_event()
 end
 
 (*
